@@ -801,9 +801,6 @@ class DoIPClient:
     def receive_diagnostic(self, timeout=None):
         """Receive a raw diagnostic payload (ie: UDS) from the ECU.
 
-        Only source addresses in allowed_response_addresses are accepted, or ecu_logical_address
-        when that collection was not configured or is empty. The target must match client_logical_address.
-
         :return: Raw UDS payload
         :rtype: bytearray
         :raises TimeoutError: No diagnostic response received in time
