@@ -149,6 +149,11 @@ class DoIPClient:
     :type auto_reconnect_tcp: bool
     :param vm_specific: Optional 4 byte long int
     :type vm_specific: int, optional
+    :param allowed_response_addresses: Allowed source logical addresses for diagnostic responses. When omitted or empty,
+        only the current ecu_logical_address is accepted. Set this to ECU physical addresses when sending to a functional
+        address. ACK/NACK messages may originate from the request target or any address in this collection.
+        The response target must always match client_logical_address.
+    :type allowed_response_addresses: Collection[int], optional
 
     :raises ConnectionRefusedError: If the activation request fails
     :raises ValueError: If the IPAddress is neither an IPv4 nor an IPv6 address
@@ -167,8 +172,10 @@ class DoIPClient:
         use_secure=False,
         auto_reconnect_tcp=False,
         vm_specific=None,
+        allowed_response_addresses=None,
     ):
         self._ecu_logical_address = ecu_logical_address
+        self._allowed_response_addresses = allowed_response_addresses
         self._client_logical_address = client_logical_address
         self._client_ip_address = client_ip_address
         self._use_secure = use_secure
@@ -728,6 +735,14 @@ class DoIPClient:
             self._ecu_logical_address, diagnostic_payload, timeout
         )
 
+    def _get_allowed_response_addresses(self, address=None):
+        response_addresses = self._allowed_response_addresses or {
+            self._ecu_logical_address
+        }
+        if address is not None:
+            return {address}.union(response_addresses)
+        return response_addresses
+
     def send_diagnostic_to_address(
         self, address, diagnostic_payload, timeout=A_PROCESSING_TIME
     ):
@@ -754,7 +769,7 @@ class DoIPClient:
                 result = self.read_doip()
             if type(result) == DiagnosticMessageNegativeAcknowledgement:
                 if (
-                    result.source_address == address
+                    result.source_address in self._get_allowed_response_addresses(address)
                     and result.target_address == self._client_logical_address
                 ):
                     raise IOError(
@@ -768,7 +783,7 @@ class DoIPClient:
                     )
             elif type(result) == DiagnosticMessagePositiveAcknowledgement:
                 if (
-                    result.source_address == address
+                    result.source_address in self._get_allowed_response_addresses(address)
                     and result.target_address == self._client_logical_address
                 ):
                     return
@@ -786,6 +801,9 @@ class DoIPClient:
     def receive_diagnostic(self, timeout=None):
         """Receive a raw diagnostic payload (ie: UDS) from the ECU.
 
+        Only source addresses in allowed_response_addresses are accepted, or ecu_logical_address
+        when that collection was not configured or is empty. The target must match client_logical_address.
+
         :return: Raw UDS payload
         :rtype: bytearray
         :raises TimeoutError: No diagnostic response received in time
@@ -801,16 +819,16 @@ class DoIPClient:
                 result = self.read_doip()
             if type(result) == DiagnosticMessage:
                 if (
-                    result.source_address == self._ecu_logical_address
+                    result.source_address in self._get_allowed_response_addresses()
                     and result.target_address == self._client_logical_address
                 ):
                     return result.user_data
                 elif (
-                    result.source_address != self._ecu_logical_address
+                    result.source_address not in self._get_allowed_response_addresses()
                     and result.target_address == self._client_logical_address
                 ):
                     logger.warning(
-                        "Received DiagnosticMessage with expected target address, but source address doesn't match expected ECU logical address. Ignoring."
+                        "Received DiagnosticMessage with expected target address, but source address is not allowed. Ignoring."
                     )
                     start_time = time.time()
                 else:
